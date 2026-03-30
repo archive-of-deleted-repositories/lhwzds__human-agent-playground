@@ -9,7 +9,7 @@ use shakmaty::{
 use std::str::FromStr;
 use std::sync::LazyLock;
 
-use crate::GameAdapter;
+use crate::{GameAdapter, standard_move_transition};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct PieceView {
@@ -105,16 +105,15 @@ impl GameAdapter for ChessAdapter {
             .collect()
     }
 
-    fn play_move(&self, state: &Value, input: &Value) -> Result<Value> {
+    fn play_move(&self, state: &Value, input: &Value) -> Result<crate::GameTransition> {
         let parsed: GameState = from_value(state.clone())?;
         let input: MoveInput = from_value(input.clone())?;
-        to_value(play_move(
+        Ok(standard_move_transition(to_value(play_move(
             &parsed,
             &input.from,
             &input.to,
             input.promotion.as_deref(),
-        )?)
-        .map_err(Into::into)
+        )?)?))
     }
 }
 

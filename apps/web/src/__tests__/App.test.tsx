@@ -1374,6 +1374,100 @@ describe('App', () => {
     })
   })
 
+  it('blocks mixed human and AI seats for Liars Bar v1 in the create dialog', async () => {
+    vi.mocked(listGames).mockResolvedValue([
+      {
+        id: 'chess',
+        title: 'Chess',
+        shortName: 'Chess',
+        description: 'Chess session.',
+        sides: ['white', 'black'],
+      },
+      {
+        id: 'liars-bar',
+        title: 'Liars Bar',
+        shortName: 'Liars Bar',
+        description: 'Text-first bluffing game.',
+        sides: ['seat-1', 'seat-2', 'seat-3', 'seat-4'],
+      },
+    ])
+    vi.mocked(listSessions).mockResolvedValue([
+      {
+        id: 'session-chess-existing',
+        gameId: 'chess',
+        createdAt: '2026-03-07T00:00:00.000Z',
+        updatedAt: '2026-03-07T00:00:00.000Z',
+        aiSeats: {
+          white: {
+            side: 'white',
+            launcher: 'human',
+            enabled: false,
+            autoPlay: false,
+            model: '',
+            providerProfileId: '',
+            promptOverride: null,
+            timeoutMs: 60000,
+            status: 'idle',
+            lastError: null,
+            runtimeSource: null,
+          },
+          black: {
+            side: 'black',
+            launcher: 'human',
+            enabled: false,
+            autoPlay: false,
+            model: '',
+            providerProfileId: '',
+            promptOverride: null,
+            timeoutMs: 60000,
+            status: 'idle',
+            lastError: null,
+            runtimeSource: null,
+          },
+        },
+        events: [],
+        state: {
+          kind: 'chess',
+          turn: 'white',
+          status: 'active',
+          winner: null,
+          isCheck: false,
+          lastMove: null,
+          board: Array.from({ length: 8 }, () => Array.from({ length: 8 }, () => null)),
+        },
+      },
+    ])
+
+    render(<App />)
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Create Session' })).toBeInTheDocument()
+    })
+
+    await act(async () => {
+      screen.getByRole('button', { name: 'Create Session' }).click()
+    })
+
+    const createDialog = screen.getByRole('dialog', { name: 'Create Session' })
+
+    fireEvent.change(within(createDialog).getByRole('combobox', { name: 'Game' }), {
+      target: { value: 'liars-bar' },
+    })
+    fireEvent.change(within(createDialog).getByRole('combobox', { name: 'Launcher seat-1' }), {
+      target: { value: 'codex' },
+    })
+
+    await act(async () => {
+      within(createDialog).getByRole('button', { name: 'Create', exact: true }).click()
+    })
+
+    expect(
+      screen.getByText("Liar's Deck v1 only supports all-AI tables or spectator-only sessions."),
+    ).toBeInTheDocument()
+    expect(createSession).not.toHaveBeenCalled()
+    expect(screen.getByRole('combobox', { name: 'Launcher seat-4' })).toBeInTheDocument()
+  })
+
   it('shows AI thinking activity and allows restarting an errored AI seat from the toolbar', async () => {
     vi.mocked(listGames).mockResolvedValue([
       {
@@ -1437,7 +1531,7 @@ describe('App', () => {
       const messageFeedCard = screen.getByRole('heading', { name: 'Message Feed' }).closest('.panel-card')
       expect(messageFeedCard).not.toBeNull()
       const pendingMessage = within(messageFeedCard as HTMLElement)
-        .getByText('black · Codex CLI is thinking…')
+        .getByText((content) => content.startsWith('black · Codex CLI is thinking…'))
         .closest('.message-feed-item-pending')
       expect(pendingMessage).not.toBeNull()
       const playersList = screen.getByRole('list', { name: 'Players' })

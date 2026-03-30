@@ -6,6 +6,7 @@ edition.workspace = true
 [dependencies]
 anyhow.workspace = true
 hap-models = { path = "../hap-models" }
+rand.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 shakmaty.workspace = true

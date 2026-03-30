@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, from_value, to_value};
 use std::sync::LazyLock;
 
-use crate::GameAdapter;
+use crate::{GameAdapter, standard_move_transition};
 
 const BOARD_SIZE: usize = 15;
 const FILES: &[u8; BOARD_SIZE] = b"abcdefghijklmno";
@@ -86,10 +86,13 @@ impl GameAdapter for GomokuAdapter {
             .collect()
     }
 
-    fn play_move(&self, state: &Value, input: &Value) -> Result<Value> {
+    fn play_move(&self, state: &Value, input: &Value) -> Result<crate::GameTransition> {
         let parsed: GameState = from_value(state.clone())?;
         let input: MoveInput = from_value(input.clone())?;
-        to_value(play_move(&parsed, &input.point)?).map_err(Into::into)
+        Ok(standard_move_transition(to_value(play_move(
+            &parsed,
+            &input.point,
+        )?)?))
     }
 }
 

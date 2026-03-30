@@ -164,7 +164,7 @@ async fn handle_get_session(
     State(state): State<AppState>,
     Path(session_id): Path<String>,
 ) -> Result<Json<Value>, ApiError> {
-    let session = state.runtime.get_session(&session_id).await?;
+    let session = state.runtime.get_public_session(&session_id).await?;
     Ok(Json(serde_json::to_value(session).unwrap_or(Value::Null)))
 }
 

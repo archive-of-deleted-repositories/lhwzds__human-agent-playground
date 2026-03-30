@@ -1,6 +1,7 @@
 import { chessGameModule } from './games/chess'
 import { connectFourGameModule } from './games/connect-four'
 import { gomokuGameModule } from './games/gomoku'
+import { liarsBarGameModule } from './games/liars-bar'
 import { othelloGameModule } from './games/othello'
 import { xiangqiGameModule } from './games/xiangqi'
 import type { GameModule } from './games/types'
@@ -8,6 +9,7 @@ import type { GameModule } from './games/types'
 const gameModules: GameModule[] = [
   xiangqiGameModule,
   chessGameModule,
+  liarsBarGameModule,
   gomokuGameModule,
   connectFourGameModule,
   othelloGameModule,

@@ -51,6 +51,7 @@ const settingsProviderOrder: AiRuntimeProviderId[] = [
 const defaultSidesByGameId: Record<string, string[]> = {
   xiangqi: ['red', 'black'],
   chess: ['white', 'black'],
+  'liars-bar': ['seat-1', 'seat-2', 'seat-3', 'seat-4'],
   gomoku: ['black', 'white'],
   othello: ['black', 'white'],
   'connect-four': ['red', 'yellow'],

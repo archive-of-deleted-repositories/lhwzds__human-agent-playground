@@ -199,6 +199,7 @@ export type UpdateAuthProfileInput = z.infer<typeof updateAuthProfileInputSchema
 export const sessionEventKindSchema = z.enum([
   'session_created',
   'move_played',
+  'action_taken',
   'session_reset',
   'system_notice',
 ])

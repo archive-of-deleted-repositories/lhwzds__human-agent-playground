@@ -112,6 +112,8 @@ const translations = {
     'players.saveAction': 'Save Players',
     'players.cancel': 'Cancel',
     'players.useDefaultModel': 'Use provider default',
+    'players.liarsBarHumanUnsupported':
+      "Liar's Deck v1 only supports all-AI tables or spectator-only sessions.",
     'workspace.loading': 'Loading board…',
     'workspace.noSession': 'No session loaded. Create one from the header bar.',
     'workspace.noRenderer': 'No renderer is registered for {gameId}.',
@@ -155,11 +157,37 @@ const translations = {
     'side.yellow': 'yellow',
     'side.black': 'black',
     'side.white': 'white',
+    'side.seat-1': 'P1',
+    'side.seat-2': 'P2',
+    'side.seat-3': 'P3',
+    'side.seat-4': 'P4',
     'game.xiangqi': 'Xiangqi',
     'game.chess': 'Chess',
+    'game.liars-bar': 'Liars Bar',
     'game.gomoku': 'Gomoku',
     'game.connect-four': 'Connect Four',
     'game.othello': 'Othello',
+    'liarsBar.round': 'Round {value}',
+    'liarsBar.phase': 'Phase: {value}',
+    'liarsBar.turn': 'Turn: {value}',
+    'liarsBar.tableCard': 'Table Card',
+    'liarsBar.tableArea': "Liar's Deck table",
+    'liarsBar.statusStrip': "Liar's Deck round status",
+    'liarsBar.previousPlay': 'Previous Play',
+    'liarsBar.noPreviousPlay': 'No one has played face-down cards yet this round.',
+    'liarsBar.faceDownPile': 'Face-down Pile',
+    'liarsBar.currentPileSummary': '{player} · {count} face-down cards',
+    'liarsBar.revealedCards': 'Revealed Cards',
+    'liarsBar.noRevealedCards': 'No cards have been revealed yet.',
+    'liarsBar.lastResolution': 'Last Resolution',
+    'liarsBar.noResolution': 'No challenge has resolved yet.',
+    'liarsBar.revolver': 'Revolver: {value}',
+    'liarsBar.revolverCompact': 'R {value}',
+    'liarsBar.handSize': 'Hidden Cards: {value}',
+    'liarsBar.handSizeCompact': 'Hand {value}',
+    'liarsBar.faceDownCards': '{value} face-down cards',
+    'liarsBar.playerEliminated': 'eliminated',
+    'liarsBar.playerActive': 'alive',
     'move.gomoku.placed': 'Placed {stone}',
     'move.xiangqi.capture': '{piece} captured {captured}',
     'move.connectFour.dropped': 'Dropped {side} disc in column {column}{pointSuffix}',
@@ -263,6 +291,7 @@ const translations = {
     'players.saveAction': '保存玩家设置',
     'players.cancel': '取消',
     'players.useDefaultModel': '使用 provider 默认模型',
+    'players.liarsBarHumanUnsupported': '骗子酒馆 Deck v1 只支持全 AI 对局或纯观战会话。',
     'workspace.loading': '正在加载棋盘…',
     'workspace.noSession': '当前没有加载对局。请先从顶部创建一个。',
     'workspace.noRenderer': '{gameId} 暂无已注册的前端渲染器。',
@@ -306,11 +335,37 @@ const translations = {
     'side.yellow': '黄方',
     'side.black': '黑方',
     'side.white': '白方',
+    'side.seat-1': 'P1',
+    'side.seat-2': 'P2',
+    'side.seat-3': 'P3',
+    'side.seat-4': 'P4',
     'game.xiangqi': '象棋',
     'game.chess': '国际象棋',
+    'game.liars-bar': '骗子酒馆',
     'game.gomoku': '五子棋',
     'game.connect-four': '四子棋',
     'game.othello': '黑白棋',
+    'liarsBar.round': '第 {value} 轮',
+    'liarsBar.phase': '阶段：{value}',
+    'liarsBar.turn': '当前轮到：{value}',
+    'liarsBar.tableCard': '桌面牌',
+    'liarsBar.tableArea': '骗子酒馆牌桌',
+    'liarsBar.statusStrip': '骗子酒馆回合状态',
+    'liarsBar.previousPlay': '上一手',
+    'liarsBar.noPreviousPlay': '本轮还没有人面朝下出牌。',
+    'liarsBar.faceDownPile': '暗牌堆',
+    'liarsBar.currentPileSummary': '{player} · {count} 张暗牌',
+    'liarsBar.revealedCards': '翻开的牌',
+    'liarsBar.noRevealedCards': '还没有翻开任何牌。',
+    'liarsBar.lastResolution': '最近结算',
+    'liarsBar.noResolution': '还没有发生质疑结算。',
+    'liarsBar.revolver': '左轮进度：{value}',
+    'liarsBar.revolverCompact': '左轮 {value}',
+    'liarsBar.handSize': '隐藏手牌：{value}',
+    'liarsBar.handSizeCompact': '手牌 {value}',
+    'liarsBar.faceDownCards': '{value} 张暗牌',
+    'liarsBar.playerEliminated': '已淘汰',
+    'liarsBar.playerActive': '存活',
     'move.gomoku.placed': '落下 {stone}',
     'move.xiangqi.capture': '{piece} 吃 {captured}',
     'move.connectFour.dropped': '{side} 在第 {column} 列落子{pointSuffix}',
@@ -462,6 +517,10 @@ export function formatTimestamp(language: AppLanguage, timestamp: string) {
 }
 
 export function formatEventHeadline(language: AppLanguage, event: SessionEvent) {
+  if (event.kind === 'action_taken' && typeof event.details.headline === 'string') {
+    return event.details.headline
+  }
+
   if (
     event.kind === 'move_played' &&
     typeof event.details.from === 'string' &&
@@ -519,6 +578,10 @@ export function formatEventSummary(
       from: typeof event.details.from === 'string' ? event.details.from : 'unknown',
       to: typeof event.details.to === 'string' ? event.details.to : 'unknown',
     })
+  }
+
+  if (event.kind === 'action_taken') {
+    return event.summary
   }
 
   return event.summary

@@ -662,7 +662,7 @@ async fn complete_with_claude_code_cli(
 
 fn build_system_prompt(game_id: &str, seat_side: &str, prompt_override: Option<&str>) -> String {
     let base = format!(
-        "You are the AI player for a shared board-game session.\nGame: {game_id}\nSeat: {seat_side}\nChoose exactly one legal action.\nRespond with raw JSON only, no markdown.\nOutput schema:\n{{\"action\": <one legal action object>, \"reasoning\": {{\"summary\": string, \"reasoningSteps\": string[], \"consideredAlternatives\": [{{\"action\": string, \"summary\": string, \"rejectedBecause\"?: string}}], \"confidence\"?: number}}}}\nNever invent actions outside the provided legal moves."
+        "You are the AI player for a shared game session.\nGame: {game_id}\nSeat: {seat_side}\nChoose exactly one legal action.\nRespond with raw JSON only, no markdown.\nOutput schema:\n{{\"action\": <one legal action object>, \"reasoning\": {{\"summary\": string, \"reasoningSteps\": string[], \"consideredAlternatives\": [{{\"action\": string, \"summary\": string, \"rejectedBecause\"?: string}}], \"confidence\"?: number}}}}\nNever invent actions outside the provided legal moves."
     );
 
     match prompt_override {
@@ -1036,6 +1036,27 @@ mod tests {
     use std::os::unix::fs::PermissionsExt;
     use uuid::Uuid;
 
+    struct EnvVarGuard {
+        key: &'static str,
+    }
+
+    impl EnvVarGuard {
+        fn set(key: &'static str, value: &std::path::Path) -> Self {
+            unsafe {
+                std::env::set_var(key, value);
+            }
+            Self { key }
+        }
+    }
+
+    impl Drop for EnvVarGuard {
+        fn drop(&mut self) {
+            unsafe {
+                std::env::remove_var(self.key);
+            }
+        }
+    }
+
     fn write_test_claude_script(name: &str, body: &str) -> std::path::PathBuf {
         let path = std::env::temp_dir().join(format!("{name}-{}.sh", Uuid::new_v4()));
         std::fs::write(&path, body).unwrap();
@@ -1284,12 +1305,10 @@ if [ "$1" = "--print" ]; then
   echo '{"action":{"from":"e7","to":"e5"},"reasoning":{"summary":"Contest the center.","reasoningSteps":["Push the king pawn."],"consideredAlternatives":[]}}'
   exit 0
 fi
-echo '{"loggedIn":true}'
-"#,
+	echo '{"loggedIn":true}'
+	"#,
         );
-        unsafe {
-            std::env::set_var("RESTFLOW_CLAUDE_BIN", &script);
-        }
+        let _claude_bin = EnvVarGuard::set("RESTFLOW_CLAUDE_BIN", &script);
 
         let auth_path = std::env::temp_dir().join(format!("auth-{}.db", Uuid::new_v4()));
         let auth_manager = build_auth_manager(&auth_path).await.unwrap();
@@ -1319,15 +1338,14 @@ echo '{"loggedIn":true}'
         assert_eq!(result.action, Some(json!({ "from": "e7", "to": "e5" })));
         assert_eq!(result.error, None);
         assert!(result.duration_ms.is_some());
-
-        unsafe {
-            std::env::remove_var("RESTFLOW_CLAUDE_BIN");
-        }
     }
 
     #[tokio::test]
     async fn returns_timeout_error_when_the_provider_request_exceeds_timeout() {
         let _lock = claude_env_lock();
+        unsafe {
+            std::env::remove_var("HUMAN_AGENT_PLAYGROUND_AI_BRIDGE_FORCE_FIRST_LEGAL");
+        }
         let script = write_test_claude_script(
             "claude-timeout",
             r#"#!/bin/sh
@@ -1339,9 +1357,7 @@ fi
 echo '{"loggedIn":true}'
 "#,
         );
-        unsafe {
-            std::env::set_var("RESTFLOW_CLAUDE_BIN", &script);
-        }
+        let _claude_bin = EnvVarGuard::set("RESTFLOW_CLAUDE_BIN", &script);
 
         let auth_path = std::env::temp_dir().join(format!("auth-timeout-{}.db", Uuid::new_v4()));
         let auth_manager = build_auth_manager(&auth_path).await.unwrap();
@@ -1375,9 +1391,5 @@ echo '{"loggedIn":true}'
                 .as_deref()
                 .is_some_and(|message| message.contains("timed out"))
         );
-
-        unsafe {
-            std::env::remove_var("RESTFLOW_CLAUDE_BIN");
-        }
     }
 }

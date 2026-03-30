@@ -5,7 +5,7 @@ use crate::ai::{
 };
 use crate::error::RuntimeError;
 use anyhow::Result;
-use hap_games::{get_game_adapter, list_game_catalog};
+use hap_games::{StateAudience, get_game_adapter, list_game_catalog};
 use hap_models::{
     AiLauncherId, AiRuntimeProviderId, AiRuntimeProviderSetting, AiRuntimeSettings, AiSeatConfig,
     AiSeatStatus, AuthProfileSummary, CreateAuthProfileInput, CreateSessionInput,
@@ -165,7 +165,10 @@ impl HumanAgentPlaygroundRuntime {
             state.sessions.values().cloned().collect::<Vec<_>>()
         };
         sessions.sort_by(|left, right| right.updated_at.cmp(&left.updated_at));
-        Ok(sessions)
+        sessions
+            .into_iter()
+            .map(|session| project_session_for_audience(&session, StateAudience::Public))
+            .collect()
     }
 
     pub fn list_games(&self) -> Vec<GameCatalogItem> {
@@ -202,6 +205,15 @@ impl HumanAgentPlaygroundRuntime {
                 );
             }
         }
+        validate_game_launcher_mix(
+            &adapter.game().id,
+            adapter.game().sides.iter().map(|side| {
+                configured_launchers
+                    .get(side)
+                    .map(|seat| seat.launcher)
+                    .unwrap_or(AiLauncherId::Human)
+            }),
+        )?;
 
         let mut ai_seats = build_default_ai_seats(&adapter.game().sides);
         for side in &adapter.game().sides {
@@ -268,7 +280,7 @@ impl HumanAgentPlaygroundRuntime {
         self.persist().await.map_err(RuntimeError::internal)?;
         self.emit_session_update(&session).await;
         Arc::clone(self).queue_ai_seat_turn(session.clone());
-        Ok(session)
+        project_session_for_audience(&session, StateAudience::Public)
     }
 
     pub async fn get_session(&self, session_id: &str) -> Result<GameSession, RuntimeError> {
@@ -278,6 +290,11 @@ impl HumanAgentPlaygroundRuntime {
             .get(session_id)
             .cloned()
             .ok_or_else(|| RuntimeError::not_found(format!("Session not found: {session_id}")))
+    }
+
+    pub async fn get_public_session(&self, session_id: &str) -> Result<GameSession, RuntimeError> {
+        let session = self.get_session(session_id).await?;
+        project_session_for_audience(&session, StateAudience::Public)
     }
 
     pub async fn get_legal_moves(
@@ -312,16 +329,22 @@ impl HumanAgentPlaygroundRuntime {
             .update_latest_session(session_id, |latest| {
                 let adapter = get_game_adapter(&latest.game_id)
                     .map_err(|error| RuntimeError::not_found(error.to_string()))?;
-                let next_state = adapter
+                let transition = adapter
                     .play_move(&latest.state, &input)
                     .map_err(|error| RuntimeError::bad_request(error.to_string()))?;
-                let move_details = merge_detail_maps(
-                    &parse_move_event_details(&next_state),
-                    &parse_ai_runtime_event_details(&input),
-                );
+                let mut event_details = if transition.event_kind == SessionEventKind::MovePlayed {
+                    merge_detail_maps(
+                        &parse_move_event_details(&transition.next_state),
+                        &transition.event_details,
+                    )
+                } else {
+                    transition.event_details.clone()
+                };
+                event_details =
+                    merge_detail_maps(&event_details, &parse_ai_runtime_event_details(&input));
                 let timestamp = now_iso();
-                let turn = read_session_turn(&next_state);
-                let status = read_session_status(&next_state);
+                let turn = read_session_turn(&transition.next_state);
+                let status = read_session_status(&transition.next_state);
                 let current_ai_seats =
                     normalize_ai_seats(&adapter.game().sides, latest.ai_seats.as_ref());
 
@@ -330,7 +353,7 @@ impl HumanAgentPlaygroundRuntime {
                     game_id: latest.game_id.clone(),
                     created_at: latest.created_at.clone(),
                     updated_at: timestamp.clone(),
-                    state: next_state,
+                    state: transition.next_state.clone(),
                     ai_seats: Some(reconcile_ai_seats(
                         current_ai_seats,
                         turn.as_deref(),
@@ -338,11 +361,13 @@ impl HumanAgentPlaygroundRuntime {
                     )),
                     events: {
                         let mut events = latest.events.clone();
-                        events.push(create_move_played_event(
+                        events.push(create_action_event(
                             &timestamp,
                             &actor,
+                            transition.event_kind,
+                            transition.event_summary.as_str(),
                             reasoning.as_ref(),
-                            move_details,
+                            event_details,
                         ));
                         events
                     },
@@ -350,7 +375,7 @@ impl HumanAgentPlaygroundRuntime {
             })
             .await?;
         Arc::clone(self).queue_ai_seat_turn(updated.clone());
-        Ok(updated)
+        project_session_for_audience(&updated, StateAudience::Public)
     }
 
     pub async fn reset_session(
@@ -401,14 +426,14 @@ impl HumanAgentPlaygroundRuntime {
             })
             .await?;
         Arc::clone(self).queue_ai_seat_turn(updated.clone());
-        Ok(updated)
+        project_session_for_audience(&updated, StateAudience::Public)
     }
 
     pub async fn subscribe_session(
         &self,
         session_id: &str,
     ) -> Result<(GameSession, broadcast::Receiver<GameSession>), RuntimeError> {
-        let session = self.get_session(session_id).await?;
+        let session = self.get_public_session(session_id).await?;
         let receiver = {
             let mut streams = self.streams.lock().await;
             streams
@@ -650,6 +675,21 @@ impl HumanAgentPlaygroundRuntime {
                 }
 
                 current_seats.insert(side.to_string(), merged);
+                validate_game_launcher_mix(
+                    &adapter.game().id,
+                    adapter.game().sides.iter().map(|candidate| {
+                        current_seats
+                            .get(candidate)
+                            .map(|seat| {
+                                if seat.enabled {
+                                    seat.launcher
+                                } else {
+                                    AiLauncherId::Human
+                                }
+                            })
+                            .unwrap_or(AiLauncherId::Human)
+                    }),
+                )?;
                 let turn = read_session_turn(&latest.state);
                 let status = read_session_status(&latest.state);
                 Ok(GameSession {
@@ -668,7 +708,7 @@ impl HumanAgentPlaygroundRuntime {
             })
             .await?;
         Arc::clone(self).queue_ai_seat_turn(updated.clone());
-        Ok(updated)
+        project_session_for_audience(&updated, StateAudience::Public)
     }
 
     pub async fn update_ai_seat_launcher(
@@ -742,6 +782,26 @@ impl HumanAgentPlaygroundRuntime {
             resolved_updates.insert(side, seat);
         }
 
+        let mut merged_seats = normalize_ai_seats(&adapter.game().sides, session.ai_seats.as_ref());
+        for (side, seat) in &resolved_updates {
+            merged_seats.insert(side.clone(), seat.clone());
+        }
+        validate_game_launcher_mix(
+            &adapter.game().id,
+            adapter.game().sides.iter().map(|side| {
+                merged_seats
+                    .get(side)
+                    .map(|seat| {
+                        if seat.enabled {
+                            seat.launcher
+                        } else {
+                            AiLauncherId::Human
+                        }
+                    })
+                    .unwrap_or(AiLauncherId::Human)
+            }),
+        )?;
+
         let updated = self
             .update_latest_session(session_id, |latest| {
                 let adapter = get_game_adapter(&latest.game_id)
@@ -771,7 +831,7 @@ impl HumanAgentPlaygroundRuntime {
             })
             .await?;
         Arc::clone(self).queue_ai_seat_turn(updated.clone());
-        Ok(updated)
+        project_session_for_audience(&updated, StateAudience::Public)
     }
 
     async fn load_from_disk(&self) -> Result<()> {
@@ -909,7 +969,11 @@ impl HumanAgentPlaygroundRuntime {
                 })
                 .clone()
         };
-        let _ = sender.send(session.clone());
+        let payload = match project_session_for_audience(session, StateAudience::Public) {
+            Ok(projected) => projected,
+            Err(_) => return,
+        };
+        let _ = sender.send(payload);
     }
 
     fn queue_ai_seat_turn(self: Arc<Self>, session: GameSession) {
@@ -992,13 +1056,16 @@ impl HumanAgentPlaygroundRuntime {
         let result = async {
             let legal_moves = self.get_legal_moves(session_id, None).await?;
             let decision_started_at = std::time::Instant::now();
+            let seat_state = adapter
+                .project_state(&thinking_session.state, StateAudience::Seat(side))
+                .map_err(RuntimeError::internal)?;
             let decision = decide_turn(
                 self.auth_manager.clone(),
                 DecideTurnRequest {
                     game_id: thinking_session.game_id.clone(),
                     session_id: thinking_session.id.clone(),
                     seat_side: side.to_string(),
-                    state: thinking_session.state.clone(),
+                    state: seat_state,
                     legal_moves: Value::Array(legal_moves.clone()),
                     recent_events: serde_json::to_value(
                         thinking_session
@@ -1639,6 +1706,29 @@ fn build_default_ai_seats(sides: &[String]) -> HashMap<String, AiSeatConfig> {
         .collect()
 }
 
+fn validate_game_launcher_mix<I>(game_id: &str, launchers: I) -> Result<(), RuntimeError>
+where
+    I: IntoIterator<Item = AiLauncherId>,
+{
+    if game_id != "liars-bar" {
+        return Ok(());
+    }
+
+    let launchers = launchers.into_iter().collect::<Vec<_>>();
+    let has_human = launchers.contains(&AiLauncherId::Human);
+    let has_ai = launchers
+        .iter()
+        .any(|launcher| *launcher != AiLauncherId::Human);
+    if has_human && has_ai {
+        return Err(
+            RuntimeError::bad_request("Human seats are not supported for Liar's Deck v1")
+                .with_code("human_seats_unsupported"),
+        );
+    }
+
+    Ok(())
+}
+
 fn default_timeout_ms_for_launcher(launcher: AiLauncherId) -> u64 {
     match launcher {
         AiLauncherId::Codex | AiLauncherId::ClaudeCode | AiLauncherId::Gemini => {
@@ -1969,31 +2059,42 @@ fn create_session_event(
     }
 }
 
-fn create_move_played_event(
+fn create_action_event(
     timestamp: &str,
     actor: &SessionActorContext,
+    kind: SessionEventKind,
+    summary_override: &str,
     reasoning: Option<&DecisionExplanation>,
     details: HashMap<String, Value>,
 ) -> SessionEvent {
-    let side = details
-        .get("side")
-        .and_then(Value::as_str)
-        .unwrap_or("Unknown");
-    let point = details.get("point").and_then(Value::as_str);
-    let from = details.get("from").and_then(Value::as_str);
-    let to = details.get("to").and_then(Value::as_str);
-    let summary = match point {
-        Some(point) => format!("{side} played {point}."),
-        None => format!(
-            "{side} played {} -> {}.",
-            from.unwrap_or("unknown"),
-            to.unwrap_or("unknown")
-        ),
+    let summary = if summary_override.trim().is_empty() {
+        match kind {
+            SessionEventKind::MovePlayed => {
+                let side = details
+                    .get("side")
+                    .and_then(Value::as_str)
+                    .unwrap_or("Unknown");
+                let point = details.get("point").and_then(Value::as_str);
+                let from = details.get("from").and_then(Value::as_str);
+                let to = details.get("to").and_then(Value::as_str);
+                match point {
+                    Some(point) => format!("{side} played {point}."),
+                    None => format!(
+                        "{side} played {} -> {}.",
+                        from.unwrap_or("unknown"),
+                        to.unwrap_or("unknown")
+                    ),
+                }
+            }
+            _ => "Recorded a session action.".to_string(),
+        }
+    } else {
+        summary_override.to_string()
     };
 
     SessionEvent {
         id: Uuid::new_v4().to_string(),
-        kind: SessionEventKind::MovePlayed,
+        kind,
         created_at: timestamp.to_string(),
         actor_kind: actor.actor_kind,
         channel: actor.channel,
@@ -2020,6 +2121,22 @@ fn create_session_reset_event(
         reasoning: None,
         details: HashMap::new(),
     }
+}
+
+fn project_session_for_audience(
+    session: &GameSession,
+    audience: StateAudience<'_>,
+) -> Result<GameSession, RuntimeError> {
+    let adapter = get_game_adapter(&session.game_id)
+        .map_err(|error| RuntimeError::not_found(error.to_string()))?;
+    let projected_state = adapter
+        .project_state(&session.state, audience)
+        .map_err(RuntimeError::internal)?;
+
+    Ok(GameSession {
+        state: projected_state,
+        ..session.clone()
+    })
 }
 
 fn create_system_notice_event(
@@ -2278,6 +2395,27 @@ mod tests {
     use crate::catalog::claude_env_lock;
     use std::os::unix::fs::PermissionsExt;
 
+    struct EnvVarGuard {
+        key: &'static str,
+    }
+
+    impl EnvVarGuard {
+        fn set(key: &'static str, value: &str) -> Self {
+            unsafe {
+                std::env::set_var(key, value);
+            }
+            Self { key }
+        }
+    }
+
+    impl Drop for EnvVarGuard {
+        fn drop(&mut self) {
+            unsafe {
+                std::env::remove_var(self.key);
+            }
+        }
+    }
+
     fn temp_runtime_config(name: &str) -> RuntimeConfig {
         let unique = format!("{}-{}", name, Uuid::new_v4());
         let root = std::env::temp_dir().join(unique);
@@ -2316,6 +2454,167 @@ mod tests {
             session.id
         );
         assert_eq!(runtime.list_sessions().await.unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn returns_public_projection_for_liars_bar_sessions() {
+        let runtime = HumanAgentPlaygroundRuntime::new(temp_runtime_config("liars-bar-public"))
+            .await
+            .unwrap();
+
+        let session = runtime
+            .create_session(CreateSessionInput {
+                game_id: "liars-bar".to_string(),
+                ..CreateSessionInput::default()
+            })
+            .await
+            .unwrap();
+
+        let public_players = session.state["players"].as_array().unwrap();
+        assert_eq!(public_players.len(), 4);
+        assert_eq!(public_players[0]["handSize"], 5);
+        assert!(public_players[0].get("hand").is_none());
+
+        let internal = runtime.get_session(&session.id).await.unwrap();
+        assert!(internal.state["players"][0]["hand"].is_array());
+        assert_eq!(
+            internal.state["players"][0]["hand"]
+                .as_array()
+                .unwrap()
+                .len(),
+            5
+        );
+    }
+
+    #[tokio::test]
+    async fn rejects_mixed_human_and_ai_liars_bar_tables() {
+        let runtime = HumanAgentPlaygroundRuntime::new(temp_runtime_config("liars-bar-mixed"))
+            .await
+            .unwrap();
+
+        let error = runtime
+            .create_session(CreateSessionInput {
+                game_id: "liars-bar".to_string(),
+                seat_launchers: Some(HashMap::from([
+                    (
+                        "seat-1".to_string(),
+                        hap_models::CreateSessionSeatLauncherInput {
+                            launcher: AiLauncherId::Codex,
+                            model: Some("codex-mini-latest".to_string()),
+                            auto_play: Some(true),
+                        },
+                    ),
+                    (
+                        "seat-2".to_string(),
+                        hap_models::CreateSessionSeatLauncherInput {
+                            launcher: AiLauncherId::Human,
+                            model: None,
+                            auto_play: None,
+                        },
+                    ),
+                ])),
+                ..CreateSessionInput::default()
+            })
+            .await
+            .unwrap_err();
+
+        assert_eq!(error.code(), Some("human_seats_unsupported"));
+    }
+
+    #[tokio::test]
+    async fn auto_plays_a_liars_bar_table_to_completion_in_mock_mode() {
+        let _force_first_legal =
+            EnvVarGuard::set("HUMAN_AGENT_PLAYGROUND_AI_BRIDGE_FORCE_FIRST_LEGAL", "1");
+        let _mock_delay = EnvVarGuard::set("HUMAN_AGENT_PLAYGROUND_AI_BRIDGE_MOCK_DELAY_MS", "1");
+
+        let runtime = HumanAgentPlaygroundRuntime::new(temp_runtime_config("liars-bar-autoplay"))
+            .await
+            .unwrap();
+        let (profile_id, _) = runtime
+            .create_auth_profile(CreateAuthProfileInput {
+                name: "Mock OpenAI".to_string(),
+                provider: "openai".to_string(),
+                credential_type: "api_key".to_string(),
+                credential_value: "sk-test".to_string(),
+                email: None,
+            })
+            .await
+            .unwrap();
+        let mut settings = runtime.get_ai_runtime_settings().await.unwrap().settings;
+        if let Some(setting) = settings
+            .providers
+            .iter_mut()
+            .find(|candidate| candidate.provider_id == AiRuntimeProviderId::Openai)
+        {
+            setting.default_model = Some("gpt-5".to_string());
+            setting.default_profile_id = Some(profile_id);
+        }
+        runtime.update_ai_runtime_settings(settings).await.unwrap();
+        let session = runtime
+            .create_session(CreateSessionInput {
+                game_id: "liars-bar".to_string(),
+                seat_launchers: Some(HashMap::from([
+                    (
+                        "seat-1".to_string(),
+                        hap_models::CreateSessionSeatLauncherInput {
+                            launcher: AiLauncherId::Openai,
+                            model: Some("gpt-5".to_string()),
+                            auto_play: Some(true),
+                        },
+                    ),
+                    (
+                        "seat-2".to_string(),
+                        hap_models::CreateSessionSeatLauncherInput {
+                            launcher: AiLauncherId::Openai,
+                            model: Some("gpt-5".to_string()),
+                            auto_play: Some(true),
+                        },
+                    ),
+                    (
+                        "seat-3".to_string(),
+                        hap_models::CreateSessionSeatLauncherInput {
+                            launcher: AiLauncherId::Openai,
+                            model: Some("gpt-5".to_string()),
+                            auto_play: Some(true),
+                        },
+                    ),
+                    (
+                        "seat-4".to_string(),
+                        hap_models::CreateSessionSeatLauncherInput {
+                            launcher: AiLauncherId::Openai,
+                            model: Some("gpt-5".to_string()),
+                            auto_play: Some(true),
+                        },
+                    ),
+                ])),
+                ..CreateSessionInput::default()
+            })
+            .await
+            .unwrap();
+
+        tokio::time::timeout(std::time::Duration::from_secs(10), async {
+            loop {
+                let latest = runtime.get_session(&session.id).await.unwrap();
+                if latest.state["status"] == "finished" {
+                    break latest;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+            }
+        })
+        .await
+        .unwrap();
+
+        let latest = runtime.get_public_session(&session.id).await.unwrap();
+        assert_eq!(latest.state["kind"], "liars-bar");
+        assert_eq!(latest.state["status"], "finished");
+        assert!(latest.state["winner"].is_string());
+        assert!(
+            latest
+                .events
+                .iter()
+                .any(|event| event.kind == SessionEventKind::ActionTaken)
+        );
+        assert!(latest.state["players"][0].get("hand").is_none());
     }
 
     #[tokio::test]

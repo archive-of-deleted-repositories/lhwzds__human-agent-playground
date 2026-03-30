@@ -18,6 +18,7 @@ axum = { version = "0.8.4", features = ["macros"] }
 chrono = { version = "0.4.42", features = ["serde"] }
 futures = "0.3.31"
 json5 = "0.4.1"
+rand = "0.9.2"
 reqwest = { version = "0.12.24", features = ["json"] }
 rmcp = { version = "0.14.0", features = ["transport-streamable-http-server", "transport-streamable-http-client-reqwest"] }
 schemars = "1.0.4"

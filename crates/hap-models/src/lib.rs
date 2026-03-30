@@ -314,6 +314,7 @@ pub struct UpdateAuthProfileInput {
 pub enum SessionEventKind {
     SessionCreated,
     MovePlayed,
+    ActionTaken,
     SessionReset,
     SystemNotice,
 }

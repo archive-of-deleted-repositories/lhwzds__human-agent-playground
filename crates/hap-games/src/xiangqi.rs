@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, from_value, to_value};
 use std::sync::LazyLock;
 
-use crate::GameAdapter;
+use crate::{GameAdapter, standard_move_transition};
 
 const STARTING_FEN: &str = "rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR w - - 0 1";
 const FILES: &[u8; 9] = b"abcdefghi";
@@ -106,10 +106,14 @@ impl GameAdapter for XiangqiAdapter {
             .collect()
     }
 
-    fn play_move(&self, state: &Value, input: &Value) -> Result<Value> {
+    fn play_move(&self, state: &Value, input: &Value) -> Result<crate::GameTransition> {
         let parsed: GameState = from_value(state.clone())?;
         let input: MoveInput = from_value(input.clone())?;
-        to_value(play_move(&parsed, &input.from, &input.to)?).map_err(Into::into)
+        Ok(standard_move_transition(to_value(play_move(
+            &parsed,
+            &input.from,
+            &input.to,
+        )?)?))
     }
 }
 

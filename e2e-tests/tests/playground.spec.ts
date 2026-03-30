@@ -3,7 +3,11 @@ import { expect, test } from '@playwright/test'
 const apiBaseUrl = process.env.PLAYGROUND_API_URL ?? 'http://127.0.0.1:8791'
 
 async function selectGame(page: Parameters<typeof test>[0]['page'], gameId: string) {
-  await page.getByRole('combobox', { name: 'Game' }).selectOption(gameId)
+  const gameSelect = page.getByRole('combobox', { name: 'Game' })
+  await expect(gameSelect).toBeVisible()
+  await expect(page.getByRole('combobox', { name: 'Session' })).toBeVisible()
+  await gameSelect.selectOption(gameId)
+  await expect(gameSelect).toHaveValue(gameId)
 }
 
 async function createSessionThroughUi(
@@ -532,6 +536,7 @@ test('creates a Chess session and plays a legal opening move', async ({ page }) 
 test('keeps the toolbar game selection when opening create session', async ({ page }) => {
   await page.goto('/')
   await selectGame(page, 'gomoku')
+  await expect(page.getByText('Game: Gomoku')).toBeVisible()
   await page.getByRole('button', { name: 'Create Session' }).click()
 
   const dialog = page.getByRole('dialog', { name: 'Create Session' })
@@ -1121,6 +1126,73 @@ test('stops an auto-play seat when the launcher is switched back to human', asyn
   const snapshot = await getSessionSnapshot(request, sessionId)
   expect(snapshot.events).toHaveLength(2)
   expect(snapshot.state.turn).toBe('white')
+})
+
+test('auto-plays a Liars Bar table without leaking private hands', async ({ page, request }) => {
+  test.setTimeout(70_000)
+  const profileName = `Liars Bar E2E ${Date.now()}`
+  await configureOpenAiProviderThroughApi(request, profileName, 'gpt-5')
+
+  await page.goto('/')
+  await page.getByRole('button', { name: 'Create Session' }).click()
+  const dialog = page.getByRole('dialog', { name: 'Create Session' })
+  await expect(dialog).toBeVisible()
+  await dialog.getByRole('combobox', { name: 'Game' }).selectOption('liars-bar')
+
+  for (const side of ['seat-1', 'seat-2', 'seat-3', 'seat-4']) {
+    await dialog.getByRole('combobox', { name: `Launcher ${side}` }).selectOption('openai')
+    await dialog.getByRole('combobox', { name: `Model ${side}` }).selectOption('gpt-5')
+  }
+
+  await dialog.getByRole('button', { name: 'Create', exact: true }).click()
+
+  await expect(page.getByText('Game: Liars Bar')).toBeVisible()
+  await expect(page.locator('.liars-bar-public-player')).toHaveCount(4)
+  await expect(page.locator('[data-square]')).toHaveCount(0)
+  await expect(page.locator('.liars-bar-card-back span')).toHaveCount(0)
+  await expect(page.locator('.panel-card-feed-timeline')).toHaveCount(1)
+
+  const sessionId = await readSessionId(page)
+  expect(sessionId).toBeTruthy()
+
+  await expect.poll(async () => {
+    const response = await request.get(`${apiBaseUrl}/api/sessions/${sessionId}`)
+    expect(response.ok()).toBe(true)
+    const snapshot = (await response.json()) as {
+      events: Array<{ kind: string; summary: string }>
+      state: {
+        status: string
+        winner?: string | null
+        players: Array<Record<string, unknown>>
+      }
+    }
+    return snapshot.state.status
+  }, { timeout: 60_000 }).toBe('finished')
+
+  const response = await request.get(`${apiBaseUrl}/api/sessions/${sessionId}`)
+  expect(response.ok()).toBe(true)
+  const snapshot = (await response.json()) as {
+    events: Array<{ kind: string; summary: string }>
+    state: {
+      status: string
+      winner?: string | null
+      players: Array<Record<string, unknown>>
+      privateHand?: unknown
+    }
+  }
+
+  expect(snapshot.events.some((event) => event.kind === 'action_taken')).toBe(true)
+  expect(snapshot.events.some((event) => /called LIAR|played .*face down/i.test(event.summary))).toBe(true)
+  expect(snapshot.state.privateHand).toBeUndefined()
+  expect(snapshot.state.players[0]?.hand).toBeUndefined()
+  expect(snapshot.state.players[0]?.handSize).not.toBeUndefined()
+
+  await expect(
+    page
+      .locator('.message-feed-item strong')
+      .filter({ hasText: /plays .* as|calls LIAR/i })
+      .first(),
+  ).toBeVisible()
 })
 
 test('creates a Connect Four session and drops a legal opening disc', async ({ page }) => {

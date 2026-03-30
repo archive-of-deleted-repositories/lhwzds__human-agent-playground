@@ -22,6 +22,7 @@ interface ActivityFeedProps {
   emptyText: string
   pendingItem?: ReactNode
   renderMoveDetails?: (language: AppLanguage, event: SessionEvent) => string
+  layout?: 'chat' | 'timeline'
 }
 
 export function ActivityFeed({
@@ -30,6 +31,7 @@ export function ActivityFeed({
   emptyText,
   pendingItem,
   renderMoveDetails,
+  layout = 'chat',
 }: ActivityFeedProps) {
   const { t } = useI18n()
   const feedEndRef = useRef<HTMLLIElement | null>(null)
@@ -44,13 +46,16 @@ export function ActivityFeed({
   )
 
   useLayoutEffect(() => {
-    feedEndRef.current?.scrollIntoView({
-      block: 'end',
-    })
+    const scrollIntoView = feedEndRef.current?.scrollIntoView
+    if (typeof scrollIntoView === 'function') {
+      scrollIntoView.call(feedEndRef.current, {
+        block: 'end',
+      })
+    }
   }, [scrollKey])
 
   return (
-    <div className="panel-card panel-card-feed">
+    <div className={`panel-card panel-card-feed panel-card-feed-${layout}`}>
       <h2>{t('feed.title')}</h2>
       {events.length === 0 && !pendingItem ? (
         <p>{emptyText}</p>

@@ -102,6 +102,7 @@ const runtimeProviderIds: AiRuntimeProviderId[] = [
 const defaultSidesByGameId: Record<string, string[]> = {
   xiangqi: ['red', 'black'],
   chess: ['white', 'black'],
+  'liars-bar': ['seat-1', 'seat-2', 'seat-3', 'seat-4'],
   gomoku: ['black', 'white'],
   othello: ['black', 'white'],
   'connect-four': ['red', 'yellow'],
@@ -156,6 +157,14 @@ function upsertSessionCollection(current: GameSession[], nextSession: GameSessio
 
 function resolvePreferredGameId(availableGames: GameCatalogItem[]) {
   return availableGames.find((game) => game.id === 'chess')?.id ?? availableGames[0]?.id ?? 'xiangqi'
+}
+
+function readSessionStatusValue(snapshot: GameSession | null | undefined) {
+  const status =
+    typeof snapshot?.state === 'object' && snapshot.state !== null && 'status' in snapshot.state
+      ? snapshot.state.status
+      : null
+  return typeof status === 'string' ? status : null
 }
 
 function loadBootstrapPayload(): Promise<BootstrapPayload> {
@@ -296,6 +305,22 @@ function buildSeatLauncherCreateInput(draft: SeatLauncherDraft) {
     model: draft.model || undefined,
     autoPlay: draft.autoPlay,
   }
+}
+
+function validateSeatLauncherDraftsForGame(
+  gameId: string,
+  sides: string[],
+  drafts: Record<string, SeatLauncherDraft>,
+  t: ReturnType<typeof useI18n>['t'],
+) {
+  if (gameId !== 'liars-bar') {
+    return null
+  }
+
+  const launchers = sides.map((side) => drafts[side]?.launcher ?? 'human')
+  const hasHuman = launchers.some((launcher) => launcher === 'human')
+  const hasAi = launchers.some((launcher) => launcher !== 'human')
+  return hasHuman && hasAi ? t('players.liarsBarHumanUnsupported') : null
 }
 
 function resolveProviderIdFromRequestError(error: RequestError | null) {
@@ -630,6 +655,7 @@ function AppContent() {
   >({})
   const [selectedGameId, setSelectedGameId] = useState('chess')
   const [createSessionGameId, setCreateSessionGameId] = useState('chess')
+  const [hasExplicitGameSelection, setHasExplicitGameSelection] = useState(false)
   const [syncState, setSyncState] = useState<LiveSyncState>('offline')
   const [error, setError] = useState<string | null>(null)
   const [aiError, setAiError] = useState<string | null>(null)
@@ -647,12 +673,18 @@ function AppContent() {
   const [aiNotice, setAiNotice] = useState<string | null>(null)
   const [activeGameOverSessionKey, setActiveGameOverSessionKey] = useState<string | null>(null)
   const previousStatusBySessionRef = useRef<Map<string, string>>(new Map())
+  const hasExplicitGameSelectionRef = useRef(false)
 
   const activeGame = games.find((game) => game.id === (session?.gameId ?? selectedGameId))
 
   function applySessionSnapshot(nextSession: GameSession) {
     setSession((current) => pickFresherSession(current, nextSession))
     setSessions((current) => upsertSessionCollection(current, nextSession))
+  }
+
+  function updateExplicitGameSelection(nextValue: boolean) {
+    hasExplicitGameSelectionRef.current = nextValue
+    setHasExplicitGameSelection(nextValue)
   }
 
   async function loadAiRuntime() {
@@ -683,8 +715,15 @@ function AppContent() {
         if (!cancelled) {
           setGames(availableGames)
           setSessions(existingSessions)
-          setSelectedGameId(active.gameId)
-          setCreateSessionGameId(resolvePreferredGameId(availableGames))
+          if (!hasExplicitGameSelectionRef.current) {
+            setSelectedGameId(active.gameId)
+            setCreateSessionGameId(resolvePreferredGameId(availableGames))
+            updateExplicitGameSelection(false)
+          }
+          const activeStatus = readSessionStatusValue(active)
+          if (activeStatus) {
+            previousStatusBySessionRef.current.set(active.id, activeStatus)
+          }
           setSession(active)
         }
       } catch (nextError) {
@@ -805,7 +844,9 @@ function AppContent() {
 
   function handleOpenCreateSession() {
     const nextGameId =
-      (selectedGameId && games.some((candidate) => candidate.id === selectedGameId)
+      (hasExplicitGameSelection &&
+      selectedGameId &&
+      games.some((candidate) => candidate.id === selectedGameId)
         ? selectedGameId
         : null) ??
       (games.length > 0 ? resolvePreferredGameId(games) : createSessionGameId)
@@ -831,6 +872,16 @@ function AppContent() {
       setError(null)
       setPlayerDialogError(null)
       const sides = resolveGameSides(selectedGame)
+      const validationError = validateSeatLauncherDraftsForGame(
+        selectedGame.id,
+        sides,
+        createSeatLauncherDrafts,
+        t,
+      )
+      if (validationError) {
+        setPlayerDialogError(validationError)
+        return
+      }
       const seatLaunchers = Object.fromEntries(
         sides.map((side) => [
           side,
@@ -845,7 +896,12 @@ function AppContent() {
         seatLaunchers,
       })
       const latestSessions = sortSessionsByUpdatedAt(await listSessions())
+      const nextStatus = readSessionStatusValue(nextSession)
+      if (nextStatus) {
+        previousStatusBySessionRef.current.set(nextSession.id, nextStatus)
+      }
       setSelectedGameId(nextSession.gameId)
+      updateExplicitGameSelection(false)
       applySessionSnapshot(nextSession)
       setSessions((current) => {
         let merged = [...current]
@@ -898,7 +954,10 @@ function AppContent() {
     }
   }
 
-  async function handleSessionChange(sessionId: string) {
+  async function handleSessionChange(
+    sessionId: string,
+    options?: { preserveExplicitGameSelection?: boolean },
+  ) {
     if (!sessionId) {
       return
     }
@@ -906,7 +965,14 @@ function AppContent() {
     try {
       setError(null)
       const nextSession = await getSession(sessionId)
+      const nextStatus = readSessionStatusValue(nextSession)
+      if (nextStatus) {
+        previousStatusBySessionRef.current.set(nextSession.id, nextStatus)
+      }
       setSelectedGameId(nextSession.gameId)
+      if (!options?.preserveExplicitGameSelection) {
+        updateExplicitGameSelection(false)
+      }
       applySessionSnapshot(nextSession)
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : 'Session switch failed')
@@ -915,6 +981,7 @@ function AppContent() {
 
   async function handleGameChange(gameId: string) {
     setSelectedGameId(gameId)
+    updateExplicitGameSelection(true)
     if (session?.gameId === gameId) {
       return
     }
@@ -926,7 +993,9 @@ function AppContent() {
       return
     }
 
-    await handleSessionChange(matchingSession.id)
+    await handleSessionChange(matchingSession.id, {
+      preserveExplicitGameSelection: true,
+    })
   }
 
   function handleProviderDraftChange(
@@ -1109,6 +1178,16 @@ function AppContent() {
       setPlayersBusy(true)
       setPlayerDialogError(null)
       const sides = resolveGameSides(activeGame, session)
+      const validationError = validateSeatLauncherDraftsForGame(
+        activeGame.id,
+        sides,
+        editSeatLauncherDrafts,
+        t,
+      )
+      if (validationError) {
+        setPlayerDialogError(validationError)
+        return
+      }
       const updated = await updateAiSeatLaunchers(
         session.id,
         Object.fromEntries(
@@ -1337,12 +1416,22 @@ function AppContent() {
             error={error}
             gameOverDialog={gameOverDialog}
             sideRailHeader={
-              <PlayersPanel
-                players={playerSummaries}
-                restartingSide={restartingSide}
-                onOpenEditPlayers={handleOpenEditPlayers}
-                onRestartAi={handleRestartAi}
-              />
+              session.gameId === 'liars-bar' ? (
+                <button
+                  className="secondary-button players-edit-button"
+                  type="button"
+                  onClick={handleOpenEditPlayers}
+                >
+                  {t('players.edit')}
+                </button>
+              ) : (
+                <PlayersPanel
+                  players={playerSummaries}
+                  restartingSide={restartingSide}
+                  onOpenEditPlayers={handleOpenEditPlayers}
+                  onRestartAi={handleRestartAi}
+                />
+              )
             }
             setupPanel={
               activeThinkingPlayer ? (

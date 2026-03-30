@@ -706,6 +706,236 @@
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.42);
 }
 
+.text-workspace-panel {
+  align-content: stretch;
+  justify-items: stretch;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 14px;
+  background:
+    linear-gradient(180deg, rgba(255, 250, 243, 0.94), rgba(245, 234, 220, 0.88)),
+    rgba(106, 66, 39, 0.08);
+}
+
+.text-workspace-panel > .panel-card-feed {
+  min-height: 0;
+  height: 100%;
+  align-self: stretch;
+}
+
+.liars-bar-public-players h2 {
+  margin: 0;
+  font-family: 'Iowan Old Style', 'Georgia', serif;
+}
+
+.liars-bar-status-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+  align-items: center;
+  padding: 12px 16px;
+  font-size: 13px;
+  color: rgba(76, 53, 41, 0.84);
+}
+
+.liars-bar-status-strip span {
+  white-space: nowrap;
+}
+
+.liars-bar-table-side-card {
+  display: grid;
+  align-content: start;
+  gap: 10px;
+}
+
+.liars-bar-table-side-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  align-items: start;
+}
+
+.liars-bar-table-side-column {
+  display: grid;
+  align-content: start;
+  gap: 10px;
+}
+
+.liars-bar-table-side-card .liars-bar-card {
+  min-height: 164px;
+}
+
+.liars-bar-card {
+  position: relative;
+  display: grid;
+  place-items: center;
+  min-height: 136px;
+  border-radius: 20px;
+  border: 1px solid rgba(74, 43, 26, 0.16);
+  box-shadow:
+    0 10px 18px rgba(57, 36, 23, 0.08),
+    inset 0 1px 0 rgba(255, 255, 255, 0.42);
+}
+
+.liars-bar-card-face {
+  padding: 16px;
+  background:
+    linear-gradient(180deg, rgba(255, 252, 246, 0.98), rgba(247, 239, 226, 0.96)),
+    radial-gradient(circle at top, rgba(182, 110, 44, 0.1), transparent 58%);
+  color: #402d22;
+}
+
+.liars-bar-card-face strong {
+  font-family: 'Iowan Old Style', 'Georgia', serif;
+  font-size: 28px;
+  line-height: 1.05;
+}
+
+.liars-bar-card-face[data-card-rank='joker'] {
+  background:
+    linear-gradient(180deg, rgba(255, 249, 235, 0.98), rgba(251, 233, 204, 0.96)),
+    radial-gradient(circle at top, rgba(212, 106, 29, 0.14), transparent 60%);
+}
+
+.liars-bar-card-back {
+  position: absolute;
+  inset: 0;
+  padding: 16px;
+  background:
+    radial-gradient(circle at top, rgba(255, 219, 170, 0.12), transparent 58%),
+    linear-gradient(180deg, #6f3024 0%, #552318 100%);
+  overflow: hidden;
+}
+
+.liars-bar-card-back::before,
+.liars-bar-card-back::after {
+  content: '';
+  position: absolute;
+  inset: 10px;
+  border-radius: 14px;
+}
+
+.liars-bar-card-back::before {
+  border: 1px solid rgba(255, 232, 204, 0.26);
+  background:
+    radial-gradient(circle at 20% 20%, rgba(255, 216, 170, 0.14), transparent 24%),
+    radial-gradient(circle at 80% 30%, rgba(255, 216, 170, 0.1), transparent 22%),
+    radial-gradient(circle at 50% 78%, rgba(255, 216, 170, 0.12), transparent 28%),
+    repeating-linear-gradient(
+      45deg,
+      rgba(255, 226, 192, 0.06) 0,
+      rgba(255, 226, 192, 0.06) 8px,
+      rgba(104, 44, 33, 0) 8px,
+      rgba(104, 44, 33, 0) 16px
+    );
+  box-shadow: inset 0 0 0 1px rgba(63, 22, 15, 0.18);
+}
+
+.liars-bar-card-back::after {
+  inset: 22px;
+  border: 1px solid rgba(255, 236, 214, 0.18);
+  background:
+    radial-gradient(circle, rgba(255, 236, 214, 0.12) 0 18%, transparent 20%),
+    linear-gradient(
+      135deg,
+      transparent 0 42%,
+      rgba(255, 236, 214, 0.08) 42% 58%,
+      transparent 58% 100%
+    ),
+    linear-gradient(
+      45deg,
+      transparent 0 42%,
+      rgba(255, 236, 214, 0.08) 42% 58%,
+      transparent 58% 100%
+    );
+}
+
+.liars-bar-card-corner {
+  position: absolute;
+  top: 12px;
+  left: 14px;
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(76, 53, 41, 0.7);
+}
+
+.liars-bar-card-subtitle {
+  font-size: 13px;
+  color: rgba(76, 53, 41, 0.72);
+}
+
+.liars-bar-face-down-pile {
+  position: relative;
+  min-height: 164px;
+}
+
+.liars-bar-face-down-pile .liars-bar-card-back {
+  width: min(100%, 104px);
+}
+
+.liars-bar-table-side-meta {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: rgba(76, 53, 41, 0.84);
+}
+
+.liars-bar-table-empty {
+  margin: 0;
+  color: #7b6757;
+  font-size: 14px;
+}
+
+.liars-bar-public-players {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 14px;
+  min-height: 0;
+}
+
+.liars-bar-public-player-list {
+  display: grid;
+  gap: 10px;
+  min-height: 0;
+  overflow: auto;
+  padding-right: 4px;
+}
+
+.liars-bar-public-player {
+  display: block;
+  padding: 12px 14px;
+  border-radius: 16px;
+  border: 1px solid rgba(74, 43, 26, 0.12);
+  background: rgba(255, 252, 246, 0.88);
+}
+
+.liars-bar-public-player-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: center;
+}
+
+.liars-bar-public-player-meta {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px 12px;
+  font-size: 13px;
+  color: rgba(76, 53, 41, 0.8);
+}
+
+.liars-bar-public-player.is-current-turn {
+  border-color: rgba(173, 104, 32, 0.28);
+  background: rgba(255, 247, 232, 0.96);
+}
+
+.liars-bar-public-player.is-eliminated {
+  border-color: rgba(124, 101, 83, 0.2);
+  background: rgba(244, 238, 231, 0.8);
+  color: #7b6757;
+}
+
 .board-shell {
   position: relative;
   width: min(100%, var(--board-shell-max-inline-size, 100%));
@@ -1653,6 +1883,24 @@
   box-shadow: 0 10px 22px rgba(91, 58, 34, 0.08);
 }
 
+.panel-card-feed-timeline .message-feed-item,
+.panel-card-feed-timeline .message-feed-item-human,
+.panel-card-feed-timeline .message-feed-item-agent,
+.panel-card-feed-timeline .message-feed-item-system,
+.panel-card-feed-timeline .message-feed-item-unknown {
+  justify-content: flex-start;
+}
+
+.panel-card-feed-timeline .message-feed-bubble {
+  width: 100%;
+  max-width: none;
+  border-radius: 16px;
+}
+
+.panel-card-feed-timeline .message-feed-list {
+  gap: 10px;
+}
+
 .message-feed-item-human .message-feed-bubble {
   background: rgba(255, 239, 218, 0.96);
 }
@@ -2006,6 +2254,10 @@
     --board-axis-gutter: 18px;
     column-gap: 6px;
     row-gap: 6px;
+  }
+
+  .liars-bar-table-side-grid {
+    grid-template-columns: 1fr;
   }
 
   .board-main {

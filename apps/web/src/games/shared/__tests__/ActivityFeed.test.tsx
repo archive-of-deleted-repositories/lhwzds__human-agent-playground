@@ -120,6 +120,23 @@ describe('ActivityFeed', () => {
     expect(screen.getByText('Time: 4.3s')).toBeInTheDocument()
   })
 
+  it('supports a timeline layout for text-first games', () => {
+    render(
+      <I18nProvider>
+        <ActivityFeed
+          emptyText="No events yet."
+          events={[createMoveEvent('event-timeline')]}
+          gameId="liars-bar"
+          layout="timeline"
+        />
+      </I18nProvider>,
+    )
+
+    const messageFeedCard = screen.getByRole('heading', { name: 'Message Feed' }).closest('.panel-card')
+    expect(messageFeedCard).not.toBeNull()
+    expect(messageFeedCard).toHaveClass('panel-card-feed-timeline')
+  })
+
   it('renders a live elapsed timer for the pending thinking item', () => {
     Element.prototype.scrollIntoView = scrollIntoViewMock
     vi.useFakeTimers()
