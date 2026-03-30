@@ -98,7 +98,7 @@ export function createSession(input: Partial<CreateSessionInput> = {}): Promise<
   return request('/api/sessions', {
     method: 'POST',
     body: JSON.stringify({
-      gameId: 'xiangqi',
+      gameId: 'chess',
       actorKind: 'human',
       channel: 'ui',
       ...input,

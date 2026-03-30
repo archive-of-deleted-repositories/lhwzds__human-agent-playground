@@ -29,6 +29,13 @@ pub trait GameAdapter: Send + Sync {
     fn create_initial_state(&self) -> Result<Value>;
     fn normalize_state(&self, state: Value) -> Result<Value>;
     fn list_legal_moves(&self, state: &Value, query: Option<&Value>) -> Result<Vec<Value>>;
+    fn project_legal_moves(
+        &self,
+        legal_moves: Vec<Value>,
+        _audience: StateAudience<'_>,
+    ) -> Result<Vec<Value>> {
+        Ok(legal_moves)
+    }
     fn play_move(&self, state: &Value, input: &Value) -> Result<GameTransition>;
     fn project_state(&self, state: &Value, _audience: StateAudience<'_>) -> Result<Value> {
         Ok(state.clone())

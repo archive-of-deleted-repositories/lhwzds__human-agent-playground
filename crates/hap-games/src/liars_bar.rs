@@ -210,6 +210,24 @@ impl GameAdapter for LiarsBarAdapter {
             .collect()
     }
 
+    fn project_legal_moves(
+        &self,
+        legal_moves: Vec<Value>,
+        audience: StateAudience<'_>,
+    ) -> Result<Vec<Value>> {
+        if !matches!(audience, StateAudience::Public) {
+            return Ok(legal_moves);
+        }
+
+        legal_moves
+            .into_iter()
+            .map(|action| {
+                let parsed: LegalAction = from_value(action)?;
+                to_value(project_public_action(&parsed)).map_err(Into::into)
+            })
+            .collect()
+    }
+
     fn play_move(&self, state: &Value, input: &Value) -> Result<GameTransition> {
         let parsed: GameState = from_value(state.clone())?;
         let action: ActionInput = from_value(input.clone())?;
@@ -577,6 +595,19 @@ fn project_public_play(play: &PlayRecord) -> PublicPlayRecord {
         display_name: play.display_name.clone(),
         declared_rank: play.declared_rank,
         card_count: play.card_count,
+    }
+}
+
+fn project_public_action(action: &LegalAction) -> Value {
+    match action {
+        LegalAction::PlayCards { label, .. } => json!({
+            "type": "play_cards",
+            "label": label,
+        }),
+        LegalAction::CallLiar { label } => json!({
+            "type": "call_liar",
+            "label": label,
+        }),
     }
 }
 
@@ -1001,5 +1032,47 @@ mod tests {
         assert_eq!(seat_state.self_side, "seat-3");
         assert_eq!(seat_state.private_hand.len(), INITIAL_HAND_SIZE);
         assert!(seat_state.previous_play.is_none());
+    }
+
+    #[test]
+    fn projects_public_legal_moves_without_revealing_cards() {
+        let state = build_state(
+            "seat-2",
+            CardRank::Queen,
+            Some(PlayRecord {
+                side: "seat-1".to_string(),
+                display_name: "P1".to_string(),
+                declared_rank: CardRank::Queen,
+                card_count: 1,
+                cards: vec![CardRank::Queen],
+            }),
+            vec![
+                build_player("seat-1", "P1", 0, 6, vec![CardRank::Ace], true),
+                build_player(
+                    "seat-2",
+                    "P2",
+                    0,
+                    6,
+                    vec![CardRank::Queen, CardRank::Joker],
+                    true,
+                ),
+                build_player("seat-3", "P3", 0, 6, vec![CardRank::King], true),
+                build_player("seat-4", "P4", 0, 6, vec![CardRank::Ace], true),
+            ],
+        );
+        let legal_moves = ADAPTER
+            .list_legal_moves(&to_value(&state).unwrap(), None)
+            .unwrap();
+
+        let projected = ADAPTER
+            .project_legal_moves(legal_moves, StateAudience::Public)
+            .unwrap();
+
+        assert!(
+            projected
+                .iter()
+                .filter(|action| action["type"] == "play_cards")
+                .all(|action| action.get("cards").is_none())
+        );
     }
 }

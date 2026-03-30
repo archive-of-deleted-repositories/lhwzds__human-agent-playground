@@ -385,7 +385,7 @@ pub fn now_iso() -> String {
 }
 
 fn default_game_id() -> String {
-    "xiangqi".to_string()
+    "chess".to_string()
 }
 
 fn default_true() -> bool {

@@ -35,7 +35,7 @@ export type CreateSessionSeatLauncherInput = z.infer<
 >
 
 export const createSessionInputSchema = z.object({
-  gameId: z.string().min(1).default('xiangqi'),
+  gameId: z.string().min(1).default('chess'),
   actorKind: z.enum(['human', 'agent', 'system', 'unknown']).optional(),
   channel: z.enum(['ui', 'mcp', 'http', 'system']).optional(),
   actorName: z.string().min(1).optional(),

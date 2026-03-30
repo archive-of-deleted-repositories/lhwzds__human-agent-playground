@@ -294,7 +294,7 @@ impl HumanAgentPlaygroundMcpServer {
                 match self
                     .runtime
                     .create_session(CreateSessionInput {
-                        game_id: input.game_id.unwrap_or_else(|| "xiangqi".to_string()),
+                        game_id: input.game_id.unwrap_or_else(|| "chess".to_string()),
                         actor_kind: Some(SessionActorKind::Agent),
                         channel: Some(SessionChannel::Mcp),
                         actor_name: None,
@@ -308,7 +308,7 @@ impl HumanAgentPlaygroundMcpServer {
             }
             ToolKind::GetGameState => {
                 let input: SessionIdInput = parse_params(args)?;
-                match self.runtime.get_session(&input.session_id).await {
+                match self.runtime.get_public_session(&input.session_id).await {
                     Ok(session) => Ok(text_result("Current game state", serde_json::to_value(session).unwrap_or(Value::Null))),
                     Err(error) => Ok(error_result(error)),
                 }

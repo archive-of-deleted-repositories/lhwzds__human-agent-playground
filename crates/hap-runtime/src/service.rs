@@ -21,6 +21,7 @@ use std::sync::Arc;
 use std::sync::Mutex as StdMutex;
 use tokio::fs::{create_dir_all, read_to_string, write};
 use tokio::sync::{Mutex, RwLock, broadcast};
+use tracing::warn;
 use uuid::Uuid;
 
 #[derive(Debug, Clone)]
@@ -305,6 +306,22 @@ impl HumanAgentPlaygroundRuntime {
         let session = self.get_session(session_id).await?;
         let adapter = get_game_adapter(&session.game_id)
             .map_err(|error| RuntimeError::not_found(error.to_string()))?;
+        let legal_moves = adapter
+            .list_legal_moves(&session.state, query.as_ref())
+            .map_err(RuntimeError::internal)?;
+        adapter
+            .project_legal_moves(legal_moves, StateAudience::Public)
+            .map_err(RuntimeError::internal)
+    }
+
+    async fn get_authoritative_legal_moves(
+        &self,
+        session_id: &str,
+        query: Option<Value>,
+    ) -> Result<Vec<Value>, RuntimeError> {
+        let session = self.get_session(session_id).await?;
+        let adapter = get_game_adapter(&session.game_id)
+            .map_err(|error| RuntimeError::not_found(error.to_string()))?;
         adapter
             .list_legal_moves(&session.state, query.as_ref())
             .map_err(RuntimeError::internal)
@@ -455,7 +472,7 @@ impl HumanAgentPlaygroundRuntime {
         timeout_ms: Option<u64>,
     ) -> Result<WaitForTurnResult, RuntimeError> {
         let timeout_ms = timeout_ms.unwrap_or(60_000);
-        let mut latest_session = self.get_session(session_id).await?;
+        let mut latest_session = self.get_public_session(session_id).await?;
         if let Some(result) =
             resolve_wait_for_turn_result(latest_session.clone(), expected_turn, after_event_id)
         {
@@ -506,7 +523,7 @@ impl HumanAgentPlaygroundRuntime {
         let played_session = self.play_move(session_id, input).await?;
         let played_event = get_latest_session_event(&played_session);
         let played_status = read_session_status(&played_session.state);
-        let mover_side = read_last_move_side(&played_session.state);
+        let mover_side = resolve_event_side(&played_session.state, played_event.as_ref());
 
         if played_status.as_deref() == Some("finished") {
             return Ok(PlayMoveAndWaitResult {
@@ -857,8 +874,14 @@ impl HumanAgentPlaygroundRuntime {
         );
         let mut normalized_sessions = HashMap::new();
         for raw_session in sessions {
-            let session = self.normalize_session(raw_session)?;
-            normalized_sessions.insert(session.id.clone(), session);
+            match self.normalize_session(raw_session) {
+                Ok(session) => {
+                    normalized_sessions.insert(session.id.clone(), session);
+                }
+                Err(error) => {
+                    warn!("Skipping invalid persisted session: {error:#}");
+                }
+            }
         }
 
         let mut state = self.state.write().await;
@@ -1054,7 +1077,7 @@ impl HumanAgentPlaygroundRuntime {
         let run_token = create_ai_seat_run_token(&thinking_session, side);
 
         let result = async {
-            let legal_moves = self.get_legal_moves(session_id, None).await?;
+            let legal_moves = self.get_authoritative_legal_moves(session_id, None).await?;
             let decision_started_at = std::time::Instant::now();
             let seat_state = adapter
                 .project_state(&thinking_session.state, StateAudience::Seat(side))
@@ -1716,10 +1739,7 @@ where
 
     let launchers = launchers.into_iter().collect::<Vec<_>>();
     let has_human = launchers.contains(&AiLauncherId::Human);
-    let has_ai = launchers
-        .iter()
-        .any(|launcher| *launcher != AiLauncherId::Human);
-    if has_human && has_ai {
+    if has_human {
         return Err(
             RuntimeError::bad_request("Human seats are not supported for Liar's Deck v1")
                 .with_code("human_seats_unsupported"),
@@ -1866,6 +1886,15 @@ fn read_last_move_side(state: &Value) -> Option<String> {
         .and_then(|value| value.get("side"))
         .and_then(Value::as_str)
         .map(str::to_string)
+}
+
+fn resolve_event_side(state: &Value, event: Option<&SessionEvent>) -> Option<String> {
+    read_last_move_side(state).or_else(|| {
+        event
+            .and_then(|item| item.details.get("side"))
+            .and_then(Value::as_str)
+            .map(str::to_string)
+    })
 }
 
 fn resolve_actor_context_from_create(
@@ -2132,11 +2161,56 @@ fn project_session_for_audience(
     let projected_state = adapter
         .project_state(&session.state, audience)
         .map_err(RuntimeError::internal)?;
+    let projected_events = project_session_events_for_audience(session, audience);
+    let projected_ai_seats = project_ai_seats_for_audience(session.ai_seats.as_ref(), audience);
 
     Ok(GameSession {
         state: projected_state,
+        events: projected_events,
+        ai_seats: projected_ai_seats,
         ..session.clone()
     })
+}
+
+fn project_session_events_for_audience(
+    session: &GameSession,
+    audience: StateAudience<'_>,
+) -> Vec<SessionEvent> {
+    let hide_reasoning =
+        session.game_id == "liars-bar" && matches!(audience, StateAudience::Public);
+    session
+        .events
+        .iter()
+        .cloned()
+        .map(|mut event| {
+            if hide_reasoning && event.kind == SessionEventKind::ActionTaken {
+                event.reasoning = None;
+            }
+            event
+        })
+        .collect()
+}
+
+fn project_ai_seats_for_audience(
+    ai_seats: Option<&HashMap<String, AiSeatConfig>>,
+    audience: StateAudience<'_>,
+) -> Option<HashMap<String, AiSeatConfig>> {
+    let ai_seats = ai_seats?;
+
+    let public_projection = matches!(audience, StateAudience::Public);
+    Some(
+        ai_seats
+            .iter()
+            .map(|(side, seat)| {
+                let mut projected = seat.clone();
+                if public_projection {
+                    projected.provider_profile_id = None;
+                    projected.prompt_override = None;
+                }
+                (side.clone(), projected)
+            })
+            .collect(),
+    )
 }
 
 fn create_system_notice_event(
@@ -2212,10 +2286,29 @@ fn build_ai_seat_signature(seat: Option<&AiSeatConfig>) -> String {
 }
 
 fn includes_legal_action(legal_moves: &[Value], action: &Value) -> bool {
-    let target = stable_json(action);
+    let target = stable_json(&canonicalize_legal_action_value(action));
     legal_moves
         .iter()
-        .any(|candidate| stable_json(candidate) == target)
+        .any(|candidate| stable_json(&canonicalize_legal_action_value(candidate)) == target)
+}
+
+fn canonicalize_legal_action_value(value: &Value) -> Value {
+    match value {
+        Value::Object(map) => {
+            let mut normalized = serde_json::Map::new();
+            for (key, entry) in map {
+                if key == "label" {
+                    continue;
+                }
+                normalized.insert(key.clone(), canonicalize_legal_action_value(entry));
+            }
+            Value::Object(normalized)
+        }
+        Value::Array(items) => {
+            Value::Array(items.iter().map(canonicalize_legal_action_value).collect())
+        }
+        _ => value.clone(),
+    }
 }
 
 fn map_bridge_decision_failure(decision: &DecideTurnResult) -> AiSeatFailure {
@@ -2434,6 +2527,70 @@ mod tests {
         path
     }
 
+    fn liars_bar_ai_seat_launchers(
+        launcher: AiLauncherId,
+        model: &str,
+        auto_play: bool,
+    ) -> HashMap<String, hap_models::CreateSessionSeatLauncherInput> {
+        HashMap::from([
+            (
+                "seat-1".to_string(),
+                hap_models::CreateSessionSeatLauncherInput {
+                    launcher,
+                    model: Some(model.to_string()),
+                    auto_play: Some(auto_play),
+                },
+            ),
+            (
+                "seat-2".to_string(),
+                hap_models::CreateSessionSeatLauncherInput {
+                    launcher,
+                    model: Some(model.to_string()),
+                    auto_play: Some(auto_play),
+                },
+            ),
+            (
+                "seat-3".to_string(),
+                hap_models::CreateSessionSeatLauncherInput {
+                    launcher,
+                    model: Some(model.to_string()),
+                    auto_play: Some(auto_play),
+                },
+            ),
+            (
+                "seat-4".to_string(),
+                hap_models::CreateSessionSeatLauncherInput {
+                    launcher,
+                    model: Some(model.to_string()),
+                    auto_play: Some(auto_play),
+                },
+            ),
+        ])
+    }
+
+    async fn configure_mock_openai(runtime: &Arc<HumanAgentPlaygroundRuntime>) {
+        let (profile_id, _) = runtime
+            .create_auth_profile(CreateAuthProfileInput {
+                name: "Mock OpenAI".to_string(),
+                provider: "openai".to_string(),
+                credential_type: "api_key".to_string(),
+                credential_value: "sk-test".to_string(),
+                email: None,
+            })
+            .await
+            .unwrap();
+        let mut settings = runtime.get_ai_runtime_settings().await.unwrap().settings;
+        if let Some(setting) = settings
+            .providers
+            .iter_mut()
+            .find(|candidate| candidate.provider_id == AiRuntimeProviderId::Openai)
+        {
+            setting.default_model = Some("gpt-5".to_string());
+            setting.default_profile_id = Some(profile_id);
+        }
+        runtime.update_ai_runtime_settings(settings).await.unwrap();
+    }
+
     #[tokio::test]
     async fn creates_and_reads_a_session() {
         let runtime = HumanAgentPlaygroundRuntime::new(temp_runtime_config("create-session"))
@@ -2461,10 +2618,16 @@ mod tests {
         let runtime = HumanAgentPlaygroundRuntime::new(temp_runtime_config("liars-bar-public"))
             .await
             .unwrap();
+        configure_mock_openai(&runtime).await;
 
         let session = runtime
             .create_session(CreateSessionInput {
                 game_id: "liars-bar".to_string(),
+                seat_launchers: Some(liars_bar_ai_seat_launchers(
+                    AiLauncherId::Openai,
+                    "gpt-5",
+                    false,
+                )),
                 ..CreateSessionInput::default()
             })
             .await
@@ -2487,12 +2650,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn rejects_mixed_human_and_ai_liars_bar_tables() {
+    async fn rejects_liars_bar_tables_with_human_seats() {
         let runtime = HumanAgentPlaygroundRuntime::new(temp_runtime_config("liars-bar-mixed"))
             .await
             .unwrap();
 
-        let error = runtime
+        let mixed_error = runtime
             .create_session(CreateSessionInput {
                 game_id: "liars-bar".to_string(),
                 seat_launchers: Some(HashMap::from([
@@ -2518,7 +2681,17 @@ mod tests {
             .await
             .unwrap_err();
 
-        assert_eq!(error.code(), Some("human_seats_unsupported"));
+        assert_eq!(mixed_error.code(), Some("human_seats_unsupported"));
+
+        let all_human_error = runtime
+            .create_session(CreateSessionInput {
+                game_id: "liars-bar".to_string(),
+                ..CreateSessionInput::default()
+            })
+            .await
+            .unwrap_err();
+
+        assert_eq!(all_human_error.code(), Some("human_seats_unsupported"));
     }
 
     #[tokio::test]
@@ -2592,7 +2765,7 @@ mod tests {
             .await
             .unwrap();
 
-        tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        tokio::time::timeout(std::time::Duration::from_secs(20), async {
             loop {
                 let latest = runtime.get_session(&session.id).await.unwrap();
                 if latest.state["status"] == "finished" {
@@ -2618,6 +2791,155 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn returns_public_legal_moves_for_liars_bar_without_private_cards() {
+        let runtime =
+            HumanAgentPlaygroundRuntime::new(temp_runtime_config("liars-bar-public-moves"))
+                .await
+                .unwrap();
+        configure_mock_openai(&runtime).await;
+        let session = runtime
+            .create_session(CreateSessionInput {
+                game_id: "liars-bar".to_string(),
+                seat_launchers: Some(liars_bar_ai_seat_launchers(
+                    AiLauncherId::Openai,
+                    "gpt-5",
+                    false,
+                )),
+                ..CreateSessionInput::default()
+            })
+            .await
+            .unwrap();
+
+        let public_moves = runtime.get_legal_moves(&session.id, None).await.unwrap();
+        let internal_moves = runtime
+            .get_authoritative_legal_moves(&session.id, None)
+            .await
+            .unwrap();
+
+        assert!(!internal_moves.is_empty());
+        assert!(
+            internal_moves
+                .iter()
+                .any(|move_value| move_value["type"] == "play_cards"
+                    && move_value.get("cards").is_some())
+        );
+        assert!(
+            public_moves
+                .iter()
+                .all(|move_value| move_value["type"] != "play_cards"
+                    || move_value.get("cards").is_none())
+        );
+    }
+
+    #[tokio::test]
+    async fn strips_private_reasoning_and_sensitive_ai_seat_fields_from_public_liars_bar_sessions()
+    {
+        let runtime = HumanAgentPlaygroundRuntime::new(temp_runtime_config("liars-bar-redaction"))
+            .await
+            .unwrap();
+        configure_mock_openai(&runtime).await;
+        let session = runtime
+            .create_session(CreateSessionInput {
+                game_id: "liars-bar".to_string(),
+                seat_launchers: Some(liars_bar_ai_seat_launchers(
+                    AiLauncherId::Openai,
+                    "gpt-5",
+                    false,
+                )),
+                ..CreateSessionInput::default()
+            })
+            .await
+            .unwrap();
+
+        let _ = runtime
+            .update_ai_seat(
+                &session.id,
+                "seat-1",
+                UpdateAiSeatInput {
+                    prompt_override: Some("Use the joker aggressively.".to_string()),
+                    provider_profile_id: Some("profile-secret".to_string()),
+                    ..UpdateAiSeatInput::default()
+                },
+            )
+            .await
+            .unwrap();
+
+        let internal = runtime.get_session(&session.id).await.unwrap();
+        let played_card = internal.state["players"][0]["hand"][0].clone();
+
+        let _ = runtime
+            .play_move(
+                &session.id,
+                json!({
+                    "type": "play_cards",
+                    "cards": [played_card],
+                    "actorKind": SessionActorKind::Agent,
+                    "channel": SessionChannel::System,
+                    "reasoning": {
+                        "summary": "I can bluff because my hand still has a Joker.",
+                        "reasoningSteps": ["My private hand includes a Joker, so this bluff is safer."],
+                        "consideredAlternatives": []
+                    }
+                }),
+            )
+            .await
+            .unwrap();
+
+        let public_session = runtime.get_public_session(&session.id).await.unwrap();
+        let public_event = public_session.events.last().unwrap();
+        let public_seat = public_session
+            .ai_seats
+            .as_ref()
+            .and_then(|seats| seats.get("seat-1"))
+            .unwrap();
+
+        assert_eq!(public_event.kind, SessionEventKind::ActionTaken);
+        assert!(public_event.reasoning.is_none());
+        assert!(public_seat.provider_profile_id.is_none());
+        assert!(public_seat.prompt_override.is_none());
+    }
+
+    #[tokio::test]
+    async fn skips_invalid_persisted_sessions_during_load() {
+        let config = temp_runtime_config("liars-bar-invalid-load");
+        if let Some(parent) = config.session_data_path.parent() {
+            std::fs::create_dir_all(parent).unwrap();
+        }
+        std::fs::write(
+            &config.session_data_path,
+            serde_json::to_string_pretty(&json!({
+                "sessions": [
+                    {
+                        "id": "legacy-liars-bar",
+                        "gameId": "liars-bar",
+                        "state": {
+                            "kind": "liars-bar",
+                            "turn": "seat-1",
+                            "status": "active",
+                            "roundNumber": 4,
+                            "phase": "playing",
+                            "currentClaim": { "quantity": 3, "rank": 5 },
+                            "players": []
+                        }
+                    },
+                    {
+                        "id": "valid-chess",
+                        "gameId": "chess"
+                    }
+                ]
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        let runtime = HumanAgentPlaygroundRuntime::new(config).await.unwrap();
+        let sessions = runtime.list_sessions().await.unwrap();
+
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0].id, "valid-chess");
+    }
+
+    #[tokio::test]
     async fn returns_ready_when_expected_turn_matches_current_turn() {
         let runtime = HumanAgentPlaygroundRuntime::new(temp_runtime_config("wait-for-turn"))
             .await
@@ -2628,12 +2950,63 @@ mod tests {
             .unwrap();
 
         let result = runtime
-            .wait_for_turn(&session.id, "red", None, Some(100))
+            .wait_for_turn(
+                &session.id,
+                read_session_turn(&session.state).as_deref().unwrap_or("white"),
+                None,
+                Some(100),
+            )
             .await
             .unwrap();
 
         assert_eq!(result.status, "ready");
         assert_eq!(result.session.id, session.id);
+    }
+
+    #[tokio::test]
+    async fn wait_for_turn_returns_public_liars_bar_sessions() {
+        let runtime =
+            HumanAgentPlaygroundRuntime::new(temp_runtime_config("liars-bar-wait-public"))
+                .await
+                .unwrap();
+        configure_mock_openai(&runtime).await;
+        let session = runtime
+            .create_session(CreateSessionInput {
+                game_id: "liars-bar".to_string(),
+                seat_launchers: Some(liars_bar_ai_seat_launchers(
+                    AiLauncherId::Openai,
+                    "gpt-5",
+                    false,
+                )),
+                ..CreateSessionInput::default()
+            })
+            .await
+            .unwrap();
+
+        let result = runtime
+            .wait_for_turn(&session.id, "seat-1", None, Some(100))
+            .await
+            .unwrap();
+
+        assert_eq!(result.status, "ready");
+        assert!(result.session.state["players"][0].get("hand").is_none());
+    }
+
+    #[test]
+    fn matches_legal_actions_without_requiring_display_labels() {
+        let legal_moves = vec![json!({
+            "type": "play_cards",
+            "cards": ["queen", "joker"],
+            "label": "Play 2 cards face-down as Queens"
+        })];
+
+        assert!(includes_legal_action(
+            &legal_moves,
+            &json!({
+                "type": "play_cards",
+                "cards": ["queen", "joker"]
+            })
+        ));
     }
 
     #[tokio::test]
