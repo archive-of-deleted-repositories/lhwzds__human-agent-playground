@@ -1,117 +1,95 @@
+---
+title: Architecture
+description: Runtime, backend, API, MCP, and UI boundaries for shared game sessions.
+covers:
+  - apps/cli/src/*.rs
+  - apps/cli/build.rs
+  - crates/hap-models/src/*.rs
+  - crates/hap-runtime/src/*.rs
+  - crates/hap-games/src/*.rs
+  - apps/backend/src/*.rs
+  - packages/core/src/*.ts
+---
+
 # Architecture
 
 ## Design Goal
 
-Human Agent Playground should support multiple tabletop games without forcing the UI, HTTP API, or MCP layer to be rewritten per game.
+Human Agent Playground supports multiple tabletop games without forcing the
+browser UI, HTTP API, or MCP layer to be rewritten for every game.
 
-The platform should let:
+The platform lets:
 
-- a human play through the web UI
-- one or more agents play through MCP
-- every client operate on the same shared session regardless of channel
+- a human play through the web UI;
+- a shell user or agent control games through the `hap` CLI;
+- one or more agents play through MCP;
+- local tools use the HTTP API;
+- every client operate on the same shared session and event stream.
 
-## Structure
+## Platform Layers
 
-### Platform Layer
+`crates/hap-models`
+
+- shared Rust DTOs for sessions, events, game catalog items, AI settings, auth
+  profiles, and API inputs;
+- the backend/runtime contract used by both HTTP handlers and MCP tools.
+
+`crates/hap-runtime`
+
+- session persistence;
+- game adapter lookup;
+- public/private state projection;
+- legal move and move execution orchestration;
+- AI provider capability and auth profile support.
+
+`crates/hap-games`
+
+- Rust game adapters used by the backend runtime;
+- one adapter interface for catalog metadata, initial state, legal moves, move
+  execution, and state projection.
 
 `packages/core`
 
-- session input schema
-- game catalog contract
-- shared platform-level types
+- shared TypeScript model package for browser and package consumers.
 
-`apps/server`
+`apps/backend`
 
-- persistent session storage
-- game catalog endpoint
-- session creation and move APIs
-- Streamable HTTP MCP endpoint backed by the same session store
-- SSE session stream for live UI updates
+- Axum HTTP server;
+- REST-style game/session/AI routes;
+- SSE session streams;
+- Streamable HTTP MCP service backed by the same runtime.
+
+`apps/cli`
+
+- `hap serve` creates the local runtime and serves API, MCP, SSE, and the built
+  web UI from one Rust binary;
+- non-serving subcommands call the local HTTP API, so CLI commands, the browser,
+  and MCP clients share the same long-running service process.
 
 `apps/web`
 
-- game selector
-- shared session inspector
-- game-specific board renderers
-
-### Game Layer
-
-`games/<game-id>`
-
-Each game folder should own:
-
-- game metadata
-- state schema
-- action schema
-- rules engine
-- rendering helpers
-- tests
-
-Today:
-
-- `games/xiangqi`
-
-Future examples:
-
-- `games/go`
-- `games/chess`
-- `games/poker`
+- React application;
+- game selector and session workspace;
+- per-game board renderers;
+- shared activity feed and API client.
 
 ## Session Model
 
-A session should carry:
+A session carries:
 
-- `gameId`
-- `state`
-- timestamps
-- optional automation / agent runner metadata later
+- `gameId`;
+- current game state;
+- timestamps;
+- move and activity history;
+- optional AI seat metadata;
+- public projections for UI/API/MCP clients.
 
-This makes one MCP connection enough. The agent does not need a per-game MCP server. It only needs the shared playground MCP, then it chooses the game by session.
+The agent does not need a per-game MCP server. It can use `hap` commands or the
+shared MCP endpoint, select or create a session, read the state, ask for legal
+moves, and submit validated moves through the same runtime path as the UI.
 
-## Agent Runners
+## Boundary Rule
 
-The current codebase does not constrain a session to fixed participant modes.
-Humans can play through the UI or MCP, and agents can drive the same session through MCP or future runners.
-
-Recommended next step:
-
-1. Add an `agent runner` service in `apps/server`
-2. Let one session bind zero, one, or two agent endpoints
-3. Add a tick endpoint or background loop:
-   - read current game state
-   - ask the assigned agent for the next action
-   - validate via the game adapter
-   - persist the next state
-   - notify UI watchers
-
-## MCP Strategy
-
-Keep one MCP server for the whole platform.
-
-That MCP server should expose platform-level tools:
-
-- `list_games`
-- `list_sessions`
-- `create_session`
-- `get_game_state`
-- `get_legal_moves`
-- `play_move`
-- `reset_session`
-
-Later it can also expose:
-
-- `attach_agent`
-- `run_agent_turn`
-- `watch_session`
-- `create_match_series`
-
-## UI Strategy
-
-The UI should stay platform-first:
-
-- top-level game switcher
-- session list
-- per-game renderer panel
-- live session stream status
-
-That allows the same product shell to host many games while only swapping the inner renderer and action vocabulary.
+Game-specific rules belong in adapters. Platform code owns sessions, routing,
+state storage, stream delivery, provider/auth configuration, and the generic
+tool catalog.

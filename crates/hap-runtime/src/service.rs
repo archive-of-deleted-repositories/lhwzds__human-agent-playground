@@ -2952,7 +2952,9 @@ mod tests {
         let result = runtime
             .wait_for_turn(
                 &session.id,
-                read_session_turn(&session.state).as_deref().unwrap_or("white"),
+                read_session_turn(&session.state)
+                    .as_deref()
+                    .unwrap_or("white"),
                 None,
                 Some(100),
             )

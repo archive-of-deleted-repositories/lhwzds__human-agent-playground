@@ -1,6 +1,7 @@
 [workspace]
 members = [
   "apps/backend",
+  "apps/cli",
   "crates/hap-games",
   "crates/hap-models",
   "crates/hap-runtime",

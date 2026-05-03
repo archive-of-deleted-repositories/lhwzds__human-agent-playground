@@ -313,8 +313,8 @@ fn flags_for_move(mv: Move, notation: &str) -> String {
         Move::EnPassant { .. } => "e".to_string(),
         Move::Normal {
             role: Role::Pawn,
-            from,
-            to,
+            from: _,
+            to: _,
             capture,
             promotion,
         } if promotion.is_some() && capture.is_some() => "cp".to_string(),

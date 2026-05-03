@@ -1,0 +1,20 @@
+[package]
+name = "hap-cli"
+version.workspace = true
+edition.workspace = true
+build = "build.rs"
+
+[[bin]]
+name = "hap"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+axum.workspace = true
+hap-runtime = { path = "../../crates/hap-runtime" }
+human-agent-playground-backend = { path = "../backend" }
+reqwest.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+tracing-subscriber.workspace = true

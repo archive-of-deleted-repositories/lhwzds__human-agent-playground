@@ -22,20 +22,42 @@ This screenshot shows a live Chess session with Claude Code playing against Code
 
 ```bash
 npm install
-bash scripts/dev.sh
+npm run build --workspace @human-agent-playground/web
+cargo run -p hap-cli --bin hap -- serve
 ```
 
 Default local endpoints:
 
-- UI: `http://127.0.0.1:4178`
+- UI: `http://127.0.0.1:8790`
 - API: `http://127.0.0.1:8790/api`
 - MCP: `http://127.0.0.1:8790/mcp`
 
-Optional overrides:
+For development with a separate Vite process:
 
 ```bash
 API_PORT=8787 WEB_PORT=4173 bash scripts/dev.sh
 ```
+
+## CLI Control
+
+Start the local service first:
+
+```bash
+hap serve
+```
+
+Then control sessions from a shell or agent:
+
+```bash
+hap games
+hap session create --game chess
+hap session show <session-id>
+hap legal-moves <session-id>
+hap play <session-id> --move-json '{"from":"e2","to":"e4","reasoning":{"summary":"Open with the king pawn."}}'
+```
+
+CLI commands default to JSON output. Add `--pretty` for human-readable
+formatting, or `--server http://127.0.0.1:8790` to target a non-default service.
 
 ## Use
 

@@ -8,17 +8,27 @@ describe('resolveApiBaseUrl', () => {
       resolveApiBaseUrl(
         'http://192.168.1.20:8790',
         '8790',
-        { protocol: 'http:', hostname: '192.168.1.10' },
+        { origin: 'http://192.168.1.10:4178', protocol: 'http:', hostname: '192.168.1.10' },
       ),
     ).toBe('http://192.168.1.20:8790')
   })
 
-  it('derives the API host from the current page hostname when no explicit URL is provided', () => {
+  it('uses same-origin when no API URL or API port is configured', () => {
+    expect(
+      resolveApiBaseUrl(
+        '',
+        '',
+        { origin: 'http://192.168.1.10:8790', protocol: 'http:', hostname: '192.168.1.10' },
+      ),
+    ).toBe('http://192.168.1.10:8790')
+  })
+
+  it('derives the API host from the current page hostname when an API port is provided', () => {
     expect(
       resolveApiBaseUrl(
         '',
         '8794',
-        { protocol: 'http:', hostname: '192.168.1.10' },
+        { origin: 'http://192.168.1.10:4178', protocol: 'http:', hostname: '192.168.1.10' },
       ),
     ).toBe('http://192.168.1.10:8794')
   })
