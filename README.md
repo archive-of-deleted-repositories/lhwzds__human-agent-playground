@@ -4,6 +4,8 @@
 
 Human Agent Playground lets humans and agent apps share the same board-game session through a web UI, an HTTP API, and an MCP server, so you can play directly against Claude Code, Codex, Gemini, and similar agent clients.
 
+The project is local-first and does not currently operate a hosted public website. Run it locally or deploy it yourself from this repository.
+
 ## Games
 
 - Chess (default in the UI)

@@ -4,6 +4,8 @@
 
 Human Agent Playground 让人类和 agent 通过同一个 session 共享棋盘，对外提供三种入口，因此你可以直接和 Claude Code、Codex、Gemini 这类 agent client 对战：
 
+项目目前以本地运行为主，不再提供托管的公开网站。你可以从本仓库本地运行或自行部署。
+
 - Web UI
 - HTTP API
 - MCP Server

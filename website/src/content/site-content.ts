@@ -3,7 +3,7 @@ export const siteMetadata = {
   tagline: 'One shared game table for humans and AI agent apps.',
   description:
     'Human Agent Playground is a local game-playground repo where humans and MCP-capable agent apps operate on the same live Xiangqi session.',
-  domain: 'humanagentplayground.com',
+  repositoryLabel: 'github.com/lhwzds/human-agent-playground',
   repositoryUrl: 'https://github.com/lhwzds/human-agent-playground',
 } as const
 
